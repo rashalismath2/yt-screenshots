@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Screenshot Library",
+  "version": "1.0.0",
+  "description": "Press P on YouTube to save numbered JPEG screenshots, browse them by video, and export selected screenshots as PDF.",
+  "permissions": ["downloads", "tabs", "unlimitedStorage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "YouTube Screenshot Library",
+    "default_popup": "popup.html"
+  },
+  "options_page": "gallery.html"
+}
