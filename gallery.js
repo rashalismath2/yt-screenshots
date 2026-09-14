@@ -495,6 +495,235 @@ async function deleteSelected() {
   render();
 }
 
+async function getImageDimensions(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+
+    const dimensions = {
+      width: bitmap.width,
+      height: bitmap.height,
+    };
+
+    bitmap.close();
+
+    return dimensions;
+  } catch {
+    return {
+      width: 1280,
+      height: 720,
+    };
+  }
+}
+
+function parseScreenshotNumber(fileName) {
+  const match = fileName.match(/^(\d+)\.(jpe?g)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+async function importScreenshotLibrary() {
+  if (!("showDirectoryPicker" in window)) {
+    alert("Folder import is not supported in this version of Chrome.");
+    return;
+  }
+
+  let rootHandle;
+
+  try {
+    rootHandle = await window.showDirectoryPicker({
+      mode: "read",
+    });
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      console.error("Unable to open screenshot folder:", error);
+
+      alert("Could not open the selected folder.");
+    }
+
+    return;
+  }
+
+  const importButton = document.getElementById("importLibrary");
+
+  const originalText = importButton?.textContent || "Import Screenshot Library";
+
+  if (importButton) {
+    importButton.disabled = true;
+    importButton.textContent = "Importing...";
+  }
+
+  let importedCount = 0;
+  let skippedCount = 0;
+  let folderCount = 0;
+
+  try {
+    const db = await openDb();
+
+    for await (const [folderName, handle] of rootHandle.entries()) {
+      if (handle.kind !== "directory") {
+        continue;
+      }
+
+      folderCount++;
+
+      const videoTitle = folderName;
+
+      /*
+       * Since we don't know the original YouTube video ID
+       * from the folder alone, imported folders receive a
+       * stable ID based on the folder name.
+       */
+      const videoId = `imported:${folderName}`;
+
+      const files = [];
+
+      for await (const [fileName, fileHandle] of handle.entries()) {
+        if (fileHandle.kind !== "file") {
+          continue;
+        }
+
+        /*
+         * Only accepts:
+         *
+         * 001.jpg
+         * 002.jpg
+         * 003.jpeg
+         * etc.
+         */
+        const number = parseScreenshotNumber(fileName);
+
+        if (number === null) {
+          continue;
+        }
+
+        files.push({
+          number,
+          fileHandle,
+        });
+      }
+
+      files.sort((a, b) => a.number - b.number);
+
+      for (const entry of files) {
+        /*
+         * Check whether this screenshot was
+         * already imported.
+         */
+        const existingTx = db.transaction(STORE, "readonly");
+
+        const existingStore = existingTx.objectStore(STORE);
+
+        const existingIndex = existingStore.index("videoId_number");
+
+        const existing = await reqPromise(
+          existingIndex.get([videoId, entry.number]),
+        );
+
+        if (existing) {
+          skippedCount++;
+          continue;
+        }
+
+        const file = await entry.fileHandle.getFile();
+
+        const dimensions = await getImageDimensions(file);
+
+        const record = {
+          videoId,
+          videoTitle,
+
+          number: entry.number,
+
+          createdAt: file.lastModified || Date.now(),
+
+          /*
+           * Timestamp cannot be reconstructed
+           * from the JPEG filename, so imported
+           * screenshots use 0.
+           */
+          timestamp: 0,
+
+          width: dimensions.width,
+
+          height: dimensions.height,
+
+          blob: file,
+
+          imported: true,
+        };
+
+        const writeTx = db.transaction(STORE, "readwrite");
+
+        const writeStore = writeTx.objectStore(STORE);
+
+        await reqPromise(writeStore.add(record));
+
+        importedCount++;
+      }
+    }
+
+    db.close();
+
+    /*
+     * Refresh gallery.
+     */
+    selected.clear();
+
+    currentVideoId = null;
+
+    await loadAll();
+
+    render();
+
+    if (folderCount === 0) {
+      alert(
+        "No video folders were found. Select the main YouTube Screenshots folder that contains one subfolder per video.",
+      );
+
+      return;
+    }
+
+    alert(
+      `Import complete. ${importedCount} screenshot(s) imported and ${skippedCount} duplicate(s) skipped.`,
+    );
+  } catch (error) {
+    console.error("Screenshot library import failed:", error);
+
+    alert(`Import failed: ${error?.message || "Unknown error"}`);
+  } finally {
+    if (importButton) {
+      importButton.disabled = false;
+
+      importButton.textContent = originalText;
+    }
+  }
+}
+
+/*
+ * Add Import button beside Select All.
+ */
+const selectAllButton = document.getElementById("selectAll");
+
+if (selectAllButton && !document.getElementById("importLibrary")) {
+  const importButton = document.createElement("button");
+
+  importButton.id = "importLibrary";
+
+  importButton.type = "button";
+
+  importButton.textContent = "Import Screenshot Library";
+
+  importButton.title = "Choose your existing YouTube Screenshots folder";
+
+  importButton.onclick = importScreenshotLibrary;
+
+  selectAllButton.parentNode.insertBefore(importButton, selectAllButton);
+}
+
 /*
  * PDF layout selector
  */
