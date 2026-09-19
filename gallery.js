@@ -1,10 +1,17 @@
 const DB_NAME = "youtube-screenshot-library";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "screenshots";
 let all = [];
+
 let currentVideoId = null;
+let currentFolder = "original";
+
 const selected = new Set();
 const objectUrls = new Map();
+
+let cropTargetId = null;
+let cropRect = null;
+let cropDragStart = null;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -13,20 +20,47 @@ function openDb() {
     req.onupgradeneeded = () => {
       const db = req.result;
 
+      let store;
+
       if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, {
+        store = db.createObjectStore(STORE, {
           keyPath: "id",
           autoIncrement: true,
         });
 
-        store.createIndex("videoId", "videoId", { unique: false });
-        store.createIndex("videoId_number", ["videoId", "number"], {
-          unique: true,
+        store.createIndex("videoId", "videoId", {
+          unique: false,
         });
-        store.createIndex("createdAt", "createdAt", { unique: false });
+
+        store.createIndex(
+          "videoId_folder_number",
+          ["videoId", "folder", "number"],
+          {
+            unique: true,
+          },
+        );
+
+        store.createIndex("createdAt", "createdAt", {
+          unique: false,
+        });
+      } else {
+        store = req.transaction.objectStore(STORE);
+
+        if (store.indexNames.contains("videoId_number")) {
+          store.deleteIndex("videoId_number");
+        }
+
+        if (!store.indexNames.contains("videoId_folder_number")) {
+          store.createIndex(
+            "videoId_folder_number",
+            ["videoId", "folder", "number"],
+            {
+              unique: true,
+            },
+          );
+        }
       }
     };
-
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -82,6 +116,10 @@ function cleanupUrls() {
   objectUrls.clear();
 }
 
+function folderKey(item) {
+  return item.folder || "original";
+}
+
 function videos() {
   const map = new Map();
 
@@ -90,15 +128,31 @@ function videos() {
       map.set(x.videoId, {
         videoId: x.videoId,
         title: x.videoTitle,
+        last: 0,
+
+        folders: new Map(),
+      });
+    }
+
+    const video = map.get(x.videoId);
+
+    const folder = folderKey(x);
+
+    if (!video.folders.has(folder)) {
+      video.folders.set(folder, {
+        name: folder,
         count: 0,
         last: 0,
       });
     }
 
-    const v = map.get(x.videoId);
+    const f = video.folders.get(folder);
 
-    v.count++;
-    v.last = Math.max(v.last, x.createdAt);
+    f.count++;
+
+    f.last = Math.max(f.last, x.createdAt);
+
+    video.last = Math.max(video.last, x.createdAt);
   }
 
   return [...map.values()].sort((a, b) => b.last - a.last);
@@ -115,42 +169,92 @@ function render() {
 
   if (!currentVideoId && vs.length) {
     currentVideoId = vs[0].videoId;
+
+    currentFolder = vs[0].folders.has("original")
+      ? "original"
+      : [...vs[0].folders.keys()][0];
   }
 
   if (currentVideoId && !vs.some((v) => v.videoId === currentVideoId)) {
     currentVideoId = vs[0]?.videoId || null;
   }
 
+  const currentVideo = vs.find((v) => v.videoId === currentVideoId);
+
+  if (currentVideo && !currentVideo.folders.has(currentFolder)) {
+    currentFolder = currentVideo.folders.has("original")
+      ? "original"
+      : [...currentVideo.folders.keys()][0];
+  }
+
   for (const v of vs) {
-    const btn = document.createElement("button");
+    const wrapper = document.createElement("div");
 
-    btn.className =
-      "videoItem" + (v.videoId === currentVideoId ? " active" : "");
+    wrapper.className = "videoGroup";
 
-    btn.innerHTML = `
+    const title = document.createElement("div");
+
+    title.className = "videoGroupTitle";
+
+    title.textContent = v.title;
+
+    wrapper.appendChild(title);
+
+    const folders = [...v.folders.values()].sort((a, b) => {
+      if (a.name === "original") return -1;
+
+      if (b.name === "original") return 1;
+
+      return a.name.localeCompare(b.name);
+    });
+
+    for (const folder of folders) {
+      const btn = document.createElement("button");
+
+      const isActive =
+        v.videoId === currentVideoId && folder.name === currentFolder;
+
+      btn.className = "videoItem folderItem" + (isActive ? " active" : "");
+
+      btn.innerHTML = `
       <span class="videoItemTitle"></span>
+
       <span class="videoItemCount">
-        ${v.count} screenshot${v.count === 1 ? "" : "s"}
+        ${folder.count}
+        screenshot${folder.count === 1 ? "" : "s"}
       </span>
     `;
 
-    btn.querySelector(".videoItemTitle").textContent = v.title;
+      btn.querySelector(".videoItemTitle").textContent =
+        folder.name === "original" ? "Original" : folder.name;
 
-    btn.onclick = () => {
-      currentVideoId = v.videoId;
-      selected.clear();
-      render();
-    };
+      btn.onclick = () => {
+        currentVideoId = v.videoId;
 
-    list.appendChild(btn);
+        currentFolder = folder.name;
+
+        selected.clear();
+
+        render();
+      };
+
+      wrapper.appendChild(btn);
+    }
+
+    list.appendChild(wrapper);
   }
 
   const shown = all
-    .filter((x) => x.videoId === currentVideoId)
+    .filter(
+      (x) => x.videoId === currentVideoId && folderKey(x) === currentFolder,
+    )
     .sort((a, b) => a.number - b.number);
 
-  document.getElementById("currentTitle").textContent =
-    shown[0]?.videoTitle || "No screenshots yet";
+  document.getElementById("currentTitle").textContent = shown.length
+    ? `${shown[0].videoTitle} / ${
+        currentFolder === "original" ? "Original" : currentFolder
+      }`
+    : "No screenshots yet";
 
   document.getElementById("countText").textContent = shown.length
     ? `${shown.length} screenshot${shown.length === 1 ? "" : "s"} • ${selected.size} selected`
@@ -209,6 +313,13 @@ function render() {
 
     card.append(check, img, meta);
 
+    img.ondblclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      openCropModal(x.id);
+    };
+
     card.onclick = (e) => {
       if (e.target === check) {
         return;
@@ -224,6 +335,384 @@ function render() {
     };
 
     grid.appendChild(card);
+  }
+}
+
+function getCurrentFolderItems() {
+  return all
+    .filter(
+      (x) => x.videoId === currentVideoId && folderKey(x) === currentFolder,
+    )
+    .sort((a, b) => a.number - b.number);
+}
+
+function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+
+    tx.onerror = () => reject(tx.error);
+
+    tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+  });
+}
+
+function resetCropSelection() {
+  cropRect = null;
+
+  cropDragStart = null;
+
+  const selection = document.getElementById("cropSelection");
+
+  selection.style.display = "none";
+
+  document.getElementById("cropSelectionText").textContent =
+    "Drag to select an area";
+}
+
+function updateCropSelection() {
+  if (!cropRect) return;
+
+  const selection = document.getElementById("cropSelection");
+
+  selection.style.display = "block";
+
+  selection.style.left = `${cropRect.x}px`;
+
+  selection.style.top = `${cropRect.y}px`;
+
+  selection.style.width = `${cropRect.width}px`;
+
+  selection.style.height = `${cropRect.height}px`;
+
+  document.getElementById("cropSelectionText").textContent =
+    `${Math.round(cropRect.width)} × ${Math.round(cropRect.height)}`;
+}
+
+function openCropModal(id) {
+  const item = all.find((x) => x.id === id);
+
+  if (!item) return;
+
+  cropTargetId = id;
+
+  resetCropSelection();
+
+  const modal = document.getElementById("cropModal");
+
+  const img = document.getElementById("cropImage");
+
+  if (img.dataset.objectUrl) {
+    URL.revokeObjectURL(img.dataset.objectUrl);
+  }
+
+  const url = URL.createObjectURL(item.blob);
+
+  img.dataset.objectUrl = url;
+
+  img.src = url;
+
+  modal.classList.add("show");
+}
+
+function closeCropModal() {
+  const modal = document.getElementById("cropModal");
+
+  const img = document.getElementById("cropImage");
+
+  modal.classList.remove("show");
+
+  if (img.dataset.objectUrl) {
+    URL.revokeObjectURL(img.dataset.objectUrl);
+
+    delete img.dataset.objectUrl;
+  }
+
+  cropTargetId = null;
+
+  resetCropSelection();
+}
+
+function getStagePoint(event) {
+  const stage = document.getElementById("cropStage");
+
+  const rect = stage.getBoundingClientRect();
+
+  return {
+    x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+
+    y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+  };
+}
+
+function installCropEvents() {
+  const stage = document.getElementById("cropStage");
+
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+
+    stage.setPointerCapture(event.pointerId);
+
+    cropDragStart = getStagePoint(event);
+
+    cropRect = {
+      x: cropDragStart.x,
+
+      y: cropDragStart.y,
+
+      width: 0,
+
+      height: 0,
+    };
+
+    updateCropSelection();
+  });
+
+  stage.addEventListener("pointermove", (event) => {
+    if (!cropDragStart) return;
+
+    const point = getStagePoint(event);
+
+    cropRect = {
+      x: Math.min(cropDragStart.x, point.x),
+
+      y: Math.min(cropDragStart.y, point.y),
+
+      width: Math.abs(point.x - cropDragStart.x),
+
+      height: Math.abs(point.y - cropDragStart.y),
+    };
+
+    updateCropSelection();
+  });
+
+  stage.addEventListener("pointerup", (event) => {
+    if (!cropDragStart) return;
+
+    stage.releasePointerCapture(event.pointerId);
+
+    cropDragStart = null;
+
+    if (cropRect.width < 5 || cropRect.height < 5) {
+      resetCropSelection();
+    }
+  });
+}
+async function cropItem(item, selection) {
+  const preview = document.getElementById("cropImage");
+
+  const previewWidth = preview.clientWidth;
+
+  const previewHeight = preview.clientHeight;
+
+  const originalWidth = Number(item.width) || preview.naturalWidth;
+
+  const originalHeight = Number(item.height) || preview.naturalHeight;
+
+  /*
+   * Convert the selected region
+   * into percentages.
+   *
+   * This allows Apply to All
+   * to work on different image sizes.
+   */
+
+  const xPercent = selection.x / previewWidth;
+
+  const yPercent = selection.y / previewHeight;
+
+  const widthPercent = selection.width / previewWidth;
+
+  const heightPercent = selection.height / previewHeight;
+
+  const bitmap = await createImageBitmap(item.blob);
+
+  try {
+    const sx = Math.round(bitmap.width * xPercent);
+
+    const sy = Math.round(bitmap.height * yPercent);
+
+    const sw = Math.round(bitmap.width * widthPercent);
+
+    const sh = Math.round(bitmap.height * heightPercent);
+
+    const canvas = document.createElement("canvas");
+
+    canvas.width = sw;
+
+    canvas.height = sh;
+
+    const ctx = canvas.getContext("2d", {
+      alpha: false,
+    });
+
+    ctx.drawImage(
+      bitmap,
+
+      sx,
+      sy,
+      sw,
+      sh,
+
+      0,
+      0,
+      sw,
+      sh,
+    );
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => {
+          if (result) resolve(result);
+          else reject(new Error("Crop failed"));
+        },
+
+        "image/jpeg",
+
+        0.95,
+      );
+    });
+
+    return {
+      blob,
+
+      width: canvas.width,
+
+      height: canvas.height,
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+async function saveCroppedItem(source, cropped) {
+  const db = await openDb();
+
+  const tx = db.transaction(STORE, "readwrite");
+
+  const store = tx.objectStore(STORE);
+
+  /*
+   * If this image was already cropped,
+   * replace the previous cropped copy.
+   */
+
+  const oldCrops = all.filter(
+    (x) =>
+      x.videoId === source.videoId &&
+      folderKey(x) === "cropped" &&
+      x.sourceId === source.id,
+  );
+
+  for (const old of oldCrops) {
+    store.delete(old.id);
+  }
+
+  store.add({
+    videoId: source.videoId,
+
+    videoTitle: source.videoTitle,
+
+    videoUrl: source.videoUrl,
+
+    timestamp: source.timestamp,
+
+    number: source.number,
+
+    width: cropped.width,
+
+    height: cropped.height,
+
+    createdAt: Date.now(),
+
+    blob: cropped.blob,
+
+    folder: "cropped",
+
+    sourceId: source.id,
+  });
+
+  await txDone(tx);
+
+  db.close();
+
+  /*
+   * Also download it physically.
+   */
+
+  const folder = sanitizeFolderName(source.videoTitle);
+
+  const fileName = `${String(source.number).padStart(3, "0")}.jpg`;
+
+  const url = URL.createObjectURL(cropped.blob);
+
+  try {
+    await chrome.downloads.download({
+      url,
+
+      filename: `YouTube Screenshots/${folder}/cropped/${fileName}`,
+
+      saveAs: false,
+
+      conflictAction: "overwrite",
+    });
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+  }
+}
+async function applyCrop(applyToAll) {
+  if (!cropRect) {
+    alert("Select a crop area first.");
+
+    return;
+  }
+
+  const target = all.find((x) => x.id === cropTargetId);
+
+  if (!target) return;
+
+  let items;
+
+  if (applyToAll) {
+    items = getCurrentFolderItems();
+  } else {
+    items = [target];
+  }
+
+  const cropButton = document.getElementById("applyCropOne");
+
+  const cropAllButton = document.getElementById("applyCropAll");
+
+  cropButton.disabled = true;
+
+  cropAllButton.disabled = true;
+
+  try {
+    for (const item of items) {
+      const result = await cropItem(item, cropRect);
+
+      await saveCroppedItem(item, result);
+    }
+
+    selected.clear();
+
+    await loadAll();
+
+    currentVideoId = target.videoId;
+
+    currentFolder = "cropped";
+
+    closeCropModal();
+
+    render();
+  } catch (error) {
+    console.error(error);
+
+    alert(error.message || "Crop failed.");
+  } finally {
+    cropButton.disabled = false;
+
+    cropAllButton.disabled = false;
   }
 }
 
@@ -617,10 +1106,10 @@ async function importScreenshotLibrary() {
 
         const existingStore = existingTx.objectStore(STORE);
 
-        const existingIndex = existingStore.index("videoId_number");
+        const existingIndex = existingStore.index("videoId_folder_number");
 
         const existing = await reqPromise(
-          existingIndex.get([videoId, entry.number]),
+          existingIndex.get([videoId, "original", entry.number]),
         );
 
         if (existing) {
@@ -640,11 +1129,6 @@ async function importScreenshotLibrary() {
 
           createdAt: file.lastModified || Date.now(),
 
-          /*
-           * Timestamp cannot be reconstructed
-           * from the JPEG filename, so imported
-           * screenshots use 0.
-           */
           timestamp: 0,
 
           width: dimensions.width,
@@ -654,6 +1138,8 @@ async function importScreenshotLibrary() {
           blob: file,
 
           imported: true,
+
+          folder: "original",
         };
 
         const writeTx = db.transaction(STORE, "readwrite");
@@ -774,7 +1260,7 @@ if (exportPdfButton && !document.getElementById("slidesPerPage")) {
 }
 
 document.getElementById("selectAll").onclick = () => {
-  for (const x of all.filter((x) => x.videoId === currentVideoId)) {
+  for (const x of getCurrentFolderItems()) {
     selected.add(x.id);
   }
 
@@ -789,6 +1275,30 @@ document.getElementById("clearSelection").onclick = () => {
 document.getElementById("exportPdf").onclick = exportPdf;
 
 document.getElementById("deleteSelected").onclick = deleteSelected;
+
+document.getElementById("closeCropModal").onclick = closeCropModal;
+
+document.getElementById("applyCropOne").onclick = () => {
+  applyCrop(false);
+};
+
+document.getElementById("applyCropAll").onclick = () => {
+  applyCrop(true);
+};
+
+document.getElementById("cropModal").onclick = (event) => {
+  if (event.target.id === "cropModal") {
+    closeCropModal();
+  }
+};
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeCropModal();
+  }
+});
+
+installCropEvents();
 
 (async () => {
   await loadAll();

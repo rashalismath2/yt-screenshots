@@ -1,45 +1,82 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>YouTube Screenshot Library</title>
-  <link rel="stylesheet" href="gallery.css">
-</head>
-<body>
-  <header>
-    <div>
-      <h1>YouTube Screenshot Library</h1>
-      <p>Browse screenshots by video, select images, and export them as a PDF.</p>
-    </div>
-    <div class="actions">
-      <button id="selectAll">Select all shown</button>
-      <button id="clearSelection" class="secondary">Clear selection</button>
-      <button id="exportPdf" class="primary">Create PDF</button>
-    </div>
-  </header>
-
-  <section class="notice">
-    <strong>Save location:</strong> Chrome extensions can choose a filename only inside Chrome's configured download directory. Set Chrome's download location to your Desktop if you want <code>Desktop/YouTube Screenshots/&lt;video name&gt;/...</code>. PDF exports use the same folder structure.
-  </section>
-
-  <main>
-    <aside>
-      <h2>Videos</h2>
-      <div id="videoList"></div>
-    </aside>
-    <section class="content">
-      <div class="contentTitle">
-        <div>
-          <h2 id="currentTitle">No screenshots yet</h2>
-          <div id="countText"></div>
-        </div>
-        <button id="deleteSelected" class="danger">Delete selected from library</button>
+  <head>
+    <meta charset="utf-8" />
+    <title>YouTube Screenshot Library</title>
+    <link rel="stylesheet" href="gallery.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>YouTube Screenshot Library</h1>
+        <p>
+          Browse screenshots by video, select images, and export them as a PDF.
+        </p>
       </div>
-      <div id="grid" class="grid"></div>
-      <div id="empty" class="empty">Press <kbd>P</kbd> on a YouTube video to take your first screenshot.</div>
-    </section>
-  </main>
+      <div class="actions">
+        <button id="selectAll">Select all shown</button>
+        <button id="clearSelection" class="secondary">Clear selection</button>
+        <button id="exportPdf" class="primary">Create PDF</button>
+      </div>
+    </header>
 
-  <script src="gallery.js"></script>
-</body>
+    <section class="notice">
+      <strong>Save location:</strong> Chrome extensions can choose a filename
+      only inside Chrome's configured download directory. Set Chrome's download
+      location to your Desktop if you want
+      <code>Desktop/YouTube Screenshots/&lt;video name&gt;/...</code>. PDF
+      exports use the same folder structure.
+    </section>
+
+    <main>
+      <aside>
+        <h2>Videos</h2>
+        <div id="videoList"></div>
+      </aside>
+      <section class="content">
+        <div class="contentTitle">
+          <div>
+            <h2 id="currentTitle">No screenshots yet</h2>
+            <div id="countText"></div>
+          </div>
+          <button id="deleteSelected" class="danger">
+            Delete selected from library
+          </button>
+        </div>
+        <div id="grid" class="grid"></div>
+        <div id="empty" class="empty">
+          Press <kbd>P</kbd> on a YouTube video to take your first screenshot.
+        </div>
+      </section>
+    </main>
+    <div id="cropModal" class="cropModal">
+      <div class="cropDialog">
+        <div class="cropHeader">
+          <div>
+            <h2>Crop screenshot</h2>
+            <p>Drag over the image to select the crop area.</p>
+          </div>
+
+          <button id="closeCropModal" class="secondary">Close</button>
+        </div>
+
+        <div id="cropStage" class="cropStage">
+          <img id="cropImage" alt="Screenshot" />
+
+          <div id="cropSelection" class="cropSelection"></div>
+        </div>
+
+        <div class="cropFooter">
+          <span id="cropSelectionText"> Drag to select an area </span>
+
+          <div class="cropActions">
+            <button id="applyCropOne" class="primary">Crop this image</button>
+
+            <button id="applyCropAll" class="primary">Apply crop to all</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="gallery.js"></script>
+  </body>
 </html>
